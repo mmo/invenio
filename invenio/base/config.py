@@ -4,6 +4,7 @@ from os.path import join
 
 EXTENSIONS = [
     'invenio.ext.confighacks',
+    'invenio.ext.elasticsearch',
     'invenio.ext.jinja2hacks',
     'invenio.ext.debug_toolbar',
     'invenio.ext.babel',
