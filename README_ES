@@ -1,0 +1,14 @@
+# Invenio with elasticsearch support
+
+## Requirements
+
+- Elasticsearch 0.99.xx
+- pip instal pyelasticsearch
+
+## Installation
+- downlaod from the source uncompress and add elaticsearch binary in your PATH var
+- use the default config file located in invenio/ext/elasticsearch/config/elasticsearch.yml
+
+## Developpment
+- simply run: foreman start
+- test:  python invenio/ext/elasticsearch/scripts/test_es.py
