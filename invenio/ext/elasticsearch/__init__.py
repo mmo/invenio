@@ -233,7 +233,7 @@ class ElasticSearch(object):
                                                           **kwargs))
 
 
-class ResultResponse(object):
+class Hits(object):
 
     def __init__(self, data):
         self.data = data
@@ -260,7 +260,7 @@ class Response(object):
 
     @property
     def hits(self):
-        return ResultResponse(self.data)
+        return Hits(self.data)
 
     @property
     def facets(self):
