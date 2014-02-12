@@ -117,7 +117,20 @@ class ElasticSearch(object):
         if self.index_exists(index=index):
             return True
         try:
-            self.connection.create_index(index=index)
+            settings = {
+
+                    #should be set to 1 for exact facet count
+                    "number_of_shards" : 1,
+
+                    #in case of primary shard failed
+                    "number_of_replicas" : 1,
+
+                    #disable automatic type detection
+                    #that can cause errors depending of the indexing order
+                    "date_detection" : False,
+                    "numeric_detection" : False,
+                    }
+            self.connection.create_index(index=index, settings=settings)
             self._mapping(index=index)
             return True
         except:
@@ -167,24 +180,25 @@ class ElasticSearch(object):
                                         }
                                     }
                                 }
-                            }
-                        },
-                    "authors": {
-                        "properties": {
-                            "affiliation": {"type": "string"},
-                            "first_name": {"type": "string"},
-                            "last_name": {"type": "string"},
-                            "full_name": {
+                            },
+                        "authors": {
+                            "properties": {
+                                "affiliation": {"type": "string"},
+                                "first_name": {"type": "string"},
+                                "last_name": {"type": "string"},
+                                "full_name": {
                                     #can be accessible with "title" instead of "title.title"
-                                    "index_name": "authors",
+                                    #"index_name": "toto",
                                     "type": "multi_field",
                                     "fields": {
                                         "authors": {"type": "string", "analyzer": "standard"},
-                                        "facet_authors": {"type": "string", "index": "not_analyzed"}
+                                        "facet_authors": {"type": "string",
+                                            "analyzer": "keyword"}
                                         }
                                     }
-                            },
-                        }
+                                },
+                            }
+                        },
                     }
                 }
         try:
@@ -194,16 +208,12 @@ class ElasticSearch(object):
             return True
         except:
             return False
-
-    def index(self, recids, index=None, **kwargs):
+    def index_records(self, records, index=None):
+        if not records:
+            return []
         if index is None:
             index = self.app.config['ELASTICSEARCH_INDEX']
-        from invenio.modules.records.api import get_record
-        records = []
-        for recid in recids:
-            record_as_dict = get_record(recid).dumps()
-            del record_as_dict["__meta_metadata__"]
-            records.append(record_as_dict)
+        
         print "Indexing: %d records" % len(records)
         results = self.connection.bulk_index(index=index,
                 doc_type=self.records_doc_type, docs=records, id_field='_id',
@@ -214,6 +224,22 @@ class ElasticSearch(object):
                 errors.append((it.get("index").get("_id"), it.get("index").get("error")))
         return errors
 
+    def index(self, recids, index=None, bulk_size=100000, **kwargs):
+        if index is None:
+            index = self.app.config['ELASTICSEARCH_INDEX']
+        from invenio.modules.records.api import get_record
+        records = []
+        errors = []
+        for recid in recids:
+            record_as_dict = get_record(recid).dumps()
+            del record_as_dict["__meta_metadata__"]
+            records.append(record_as_dict)
+            if len(records) >= bulk_size:
+                errors += self.index_records(records, index)
+                records = []
+        errors += self.index_records(records, index)
+        return errors
+
     def find_similar(self, recid, index=None, **kwargs):
         if index is None:
             index = self.app.config['ELASTICSEARCH_INDEX']
@@ -222,13 +248,63 @@ class ElasticSearch(object):
                 doc_type=self.records_doc_type,
                 id=recid, mlt_fields=fields_to_compute_similarity)
 
-    def search(self, query, index=None, **kwargs):
+    def search(self, query, index=None, cc=None, c=None, p="", f="", rg=None,
+            sf=None, so="d", jrec=0, facet_filters=[], **kwargs):
         """ """
         if index is None:
             index = self.app.config['ELASTICSEARCH_INDEX']
 
-        query = self.process_query(query)
+        if cc is None:
+            cc = self.app.config['CFG_SITE_NAME']
 
+        if rg is None:
+            rg = int(self.app.config['CFG_WEBSEARCH_DEF_RECORDS_IN_GROUPS'])
+
+        query = self.process_query(query)
+        options = {
+            "size": rg,
+            "from": jrec,
+            "fields": [
+                "recid"
+                ]
+        }
+        if sf:
+            options["sort"] =  [
+                    {
+                        "sort_%s" % sf: {
+                            "order": "desc" if so == "d" else "asc"
+                            }
+                        }
+                    ] 
+        filters = []
+        for ft in facet_filters:
+            (term, value) = ft
+            filters.append({
+                "term": {
+                    term: value
+                }
+            })
+        if filters:
+            query = {
+                "query" : {
+                    "filtered": {
+                        "query": query.get("query"),
+                        "filter": {
+                            "bool": {
+                                "must": filters
+                            }
+                        }
+                    }
+                }
+            }
+        query["facets"] = {
+            "authors": {
+                "terms": {
+                    "field": "facet_authors",
+                    "size": 10
+                }
+            }
+        }
         return self.process_results(self.connection.search(query, index=index,
                                                           **kwargs))
 
@@ -247,10 +323,11 @@ class Hits(object):
         return self.data['hits']['total']
 
 
-class Facets(object):
-    # from here down lets make new class???
-    def facets(self):
-        return self.data['facets']
+from UserDict import UserDict
+class Facets(UserDict):
+    
+    def __init__(self, data):
+        UserDict.__init__(self, data.get("facets"))
 
 
 class Response(object):
@@ -273,11 +350,11 @@ def process_es_results(results):
 
 def process_es_query(query):
     es_query = {
-        "query": {
-            "query_string": {
-                "query": query
-            }
-        }
+            "query": {
+                "query_string": {
+                    "query": query
+                    }
+                },
     }
     return es_query
 

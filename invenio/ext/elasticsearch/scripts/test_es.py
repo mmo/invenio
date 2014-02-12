@@ -65,7 +65,11 @@ if __name__ == '__main__':
         es = current_app.extensions.get("elasticsearch")
         es.delete_index()
         es.create_index()
-        es.index(range(1,100))
-        res = es.search("isbn:0612382052")
+        es.index(range(1,100), bulk_size=10)
+        #res = es.search("*")
+        res = es.search(query="authors.affiliation:Oxford",
+                facet_filters=[("facet_authors", "Ellis, J"), ("facet_authors",
+                    "Ibanez, L E")])
         for r in res.hits:
             print r
+        print res.facets
