@@ -366,7 +366,7 @@ class ElasticSearch(object):
 
         es_query = self.process_query(query)
         query_body = {
-            "size": rg,
+            "size": 100,
             "from": jrec,
             "fields": [
                 "_all"
@@ -409,8 +409,7 @@ class ElasticSearch(object):
 
         # filters concatenation
         if filters:
-            query_body = {
-                "query" : {
+            query_body["query"] = {
                     "filtered": {
                         "query": es_query.get("query"),
                         "filter": {
@@ -420,7 +419,9 @@ class ElasticSearch(object):
                         }
                     }
                 }
-            }
+        else:
+            query_body["query"] = es_query.get("query")
+
 
         # facet configuration
         from .config.facets import records_config
@@ -431,11 +432,13 @@ class ElasticSearch(object):
         query_body["highlight"] = records_config()
         results = self.process_results(self.connection.search(query_body,
             index=index, doc_type=self.records_doc_type, **kwargs))
+        import json
         
         #build query for fulltext highlighting
         from .config.highlights import bibdocs_config
         matched_ids = [recid for recid in results.hits] 
         bibdocs_query = {
+                "fields": [],
                 "query": {
                     "filtered": {
                         "query": {
@@ -455,12 +458,13 @@ class ElasticSearch(object):
                 }
 
         #submit query for fulltext highlighting
-        hi_results = self.process_results(self.connection.search(bibdocs_query,
-            index=index, doc_type=self.bibdocs_doc_type, **kwargs))
+        hi_raw_res = self.connection.search(bibdocs_query,
+            index=index, doc_type=self.bibdocs_doc_type, **kwargs)
+        hi_results = self.process_results(hi_raw_res)
         
         #merge with existing metadata highlights
         for recid, hi in hi_results.highlights.iteritems():
-            results.highlights.setdefault(recid,{}).update(hi)
+            results.highlights.setdefault(recid, {}).update(hi)
 
         return results
 
