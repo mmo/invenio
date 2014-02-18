@@ -80,7 +80,7 @@ class ElasticSearch(object):
         # TODO: to put in config?
         self.records_doc_type = "records"
         self.bibdocs_doc_type = "bibdocs"
-        self.collection_doc_type = "collections"
+        self.collections_doc_type = "collections"
 
         # to cache recids collections
         self._recids_collections = {}
@@ -173,113 +173,37 @@ class ElasticSearch(object):
         if self.index_exists(index=index):
             return True
         try:
-            settings = {
+            from .config.index import index_settings
+            #create index
+            self.connection.create_index(index=index, settings=index_settings())
+            
+            from .config.fields import records_mapping, bibdocs_mapping,\
+                collections_mapping 
+            #mappings
+            self._mapping(index=index, doc_type=self.records_doc_type,
+                    fields_mapping=records_mapping())
 
-                    #should be set to 1 for exact facet count
-                    "number_of_shards": 1,
+            self._mapping(index=index, doc_type=self.bibdocs_doc_type,
+                    fields_mapping=bibdocs_mapping(),
+                    parent_type=self.records_doc_type)
 
-                    #in case of primary shard failed
-                    "number_of_replicas": 1,
+            self._mapping(index=index, doc_type=self.collections_doc_type,
+                    fields_mapping=collections_mapping(),
+                    parent_type=self.records_doc_type)
 
-                    #disable automatic type detection
-                    #that can cause errors depending of the indexing order
-                    "date_detection": False,
-                    "numeric_detection": False,
-                    }
-            self.connection.create_index(index=index, settings=settings)
-            self._records_mapping(index=index)
-            self._bibdocs_mapping(index=index)
-            self._collections_mapping(index=index)
             return True
         except:
             return False
 
-    def _collections_mapping(self, index):
+    def _mapping(self, index, doc_type, fields_mapping, parent_type=None):
         mapping = {
-                self.collection_doc_type : {
-                    "_parent": {"type": self.records_doc_type},
-                    #define the mapping for all Marc entries
-                    "properties": {
-                        #force recid type to integer for default sorting
-                        "recid": {"type": "integer"},
-                        "name": {
-                            "type": "string",
-                            "analyzer": "keyword"
-                            }
-                        }
+                doc_type: {
+                    "properties": fields_mapping
                     }
                 }
-        return self._mapping(index, self.collection_doc_type, mapping)
-
-    def _bibdocs_mapping(self, index):
-        mapping = {
-                self.bibdocs_doc_type: {
-                    "_parent": {"type": self.records_doc_type},
-                    #define the mapping for all Marc entries
-                    "properties": {
-                        #force recid type to integer for default sorting
-                        "recid": {"type": "integer"},
-                        "fulltext": {"type": "string"},
-                        }
-                    }
-                }
-        return self._mapping(index, self.bibdocs_doc_type, mapping)
-
-    def _records_mapping(self, index):
-        mapping = {
-                self.records_doc_type: {
-                    #define the mapping for all Marc entries
-                    "properties": {
-                        #force recid type to integer for default sorting
-                        "recid": {"type": "integer"},
-
-                        "email": {"type": "string", "index": "not_analyzed"},
-                        "primary_report_number": {"type": "string", "index": "not_analyzed"},
-                        "creation_date": {"type": "date"},
-                        "modification_date": {"type": "date"},
-                        "number_of_authors": {"type": "date"},
-                        "keywords": {
-                            "properties": {
-                                "term": {"type": "string", "index": "not_analyzed"},
-                                }
-                            },
-                        #title: sorting use a separate field
-                        "title": {
-                            "properties": {
-                                "title": {
-                                    #can be accessible with "title" instead of "title.title"
-                                    "index_name": "title",
-                                    "type": "multi_field",
-                                    "fields": {
-                                        "title": {"type": "string", "analyzer": "standard"},
-                                        "sort_title": {"type": "string", "analyzer": "simple"}
-                                        }
-                                    }
-                                }
-                            },
-                        "authors": {
-                            "properties": {
-                                "affiliation": {"type": "string"},
-                                "first_name": {"type": "string"},
-                                "last_name": {"type": "string"},
-                                "full_name": {
-                                    #can be accessible with "title" instead of "title.title"
-                                    #"index_name": "toto",
-                                    "type": "multi_field",
-                                    "fields": {
-                                        "authors": {"type": "string", "analyzer": "standard"},
-                                        "facet_authors": {"type": "string",
-                                            "analyzer": "keyword"}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-        return self._mapping(index, self.records_doc_type, mapping)
-
-    def _mapping(self, index, doc_type, mapping):
+        if parent_type:
+            mapping[doc_type]["_parent"] = {"type": parent_type}
+        print mapping
         try:
             self.connection.put_mapping(index=index, doc_type=doc_type,
                 mapping=mapping)
@@ -356,7 +280,7 @@ class ElasticSearch(object):
         self.get_all_collections_record()
         if index is None:
             index = self.app.config['ELASTICSEARCH_INDEX']
-        return self._index_docs(recids, self.collection_doc_type, index,
+        return self._index_docs(recids, self.collections_doc_type, index,
                 bulk_size, self._get_collections)
 
     def index_bibdocs(self, recids, index=None, bulk_size=100000, **kwargs):
@@ -473,7 +397,7 @@ class ElasticSearch(object):
             (term, value) = ft
             filters.append({
                 "has_child": {
-                    "type": self.collection_doc_type,
+                    "type": self.collections_doc_type,
                     "query": {
                         "term": {
                             "name": {
@@ -500,24 +424,12 @@ class ElasticSearch(object):
             }
 
         # facet configuration
-        query["facets"] = {
-            "authors": {
-                "terms": {
-                    "field": "facet_authors",
-                    "size": 10
-                }
-            }
-        }
+        from .config.facets import records_config
+        query["facets"] = records_config()
 
         # hightlight configuration
-        query["highlight"] = {
-                "fields": {
-                    "number_of_fragments" : 3,
-                    "fragment_size" : 150,
-                    "authors.*": {},
-                    "title.*": {}
-                    }
-                }
+        from .config.highlights import records_config
+        query["highlight"] = records_config()
         return self.process_results(self.connection.search(query, index=index,
                                                           **kwargs))
 
