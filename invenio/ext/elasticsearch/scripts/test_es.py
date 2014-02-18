@@ -28,48 +28,40 @@ if __name__ == '__main__':
 
     parser.set_description ("Change It")
 
-
-
-    parser.add_option ("-v", "--verbose", dest="verbose",
-                       help="Verbose mode",
-                       action="store_true", default=False)
     
-    parser.add_option ("-r", "--reset", dest="reset",
-                       help="Reset the db",
-                       action="store_true", default=False)
-    
-    parser.add_option ("-d", "--delete", dest="delete",
-                       help="Delete index",
-                       action="store_true", default=False)
-
-    parser.add_option ("-b", "--bibdoc", dest="bibdoc",
-                       help="Index bibliographic records",
-                       action="store_true", default=False)
-
-    parser.add_option ("-C", "--root-collection", dest="rootcollection",
-                       help="Index collection",
-                       type="string", default="Atlantis Institute of Fictive Science")
-
-    parser.add_option ("-c", "--collection", dest="facetcollections",
-                       help="Index collection",
-                       action="store_true", default=False)
-    parser.add_option ("-i", "--index-name", dest="index_name",
-                       help="Index name",
-                       type="string", default="rerodoc")
     (options,args) = parser.parse_args ()
     from flask import request
     from invenio.base.factory import create_app
     current_app = create_app()
     
     with current_app.test_request_context():
+        print "-- Connect to the ES server --"
         es = current_app.extensions.get("elasticsearch")
+
+        print "-- Delete old index --"
         es.delete_index()
+
+        print "-- Create the index --"
         es.create_index()
-        es.index(range(1,100), bulk_size=10)
-        #res = es.search("*")
-        res = es.search(query="authors.affiliation:Oxford",
+
+        print "-- Index records --"
+        es.index_records(range(1,100), bulk_size=10)
+
+        print "-- Index bibdocs --"
+        es.index_bibdocs(range(1,100), bulk_size=10)
+
+        print "-- Index collections --"
+        es.index_collections(range(1,100), bulk_size=1000)
+
+        print "-- Perform search --"
+        res = es.search(query="Oxford or unification",
                 facet_filters=[("facet_authors", "Ellis, J"), ("facet_authors",
                     "Ibanez, L E")])
-        for r in res.hits:
-            print r
-        print res.facets
+
+        print "Hits:"
+        print [hit for hit in res.hits]
+        import json
+        print "Facets:"
+        print json.dumps(res.facets.__dict__, indent=2)
+        print "Highlights:"
+        print json.dumps(res.highlights.__dict__, indent=2)

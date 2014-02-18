@@ -52,6 +52,9 @@ class ElasticSearch(object):
         self.process_query = lambda x: x
         self.process_results = lambda x: x
         self.records_doc_type = "records"
+        self.bibdocs_doc_type = "bibdocs"
+        self.collection_doc_type = "collections"
+        self._recids_collections = {}
 
         if app is not None:
             self.init_app(app)
@@ -131,27 +134,47 @@ class ElasticSearch(object):
                     "numeric_detection" : False,
                     }
             self.connection.create_index(index=index, settings=settings)
-            self._mapping(index=index)
+            self._records_mapping(index=index)
+            self._bibdocs_mapping(index=index)
+            self._collections_mapping(index=index)
             return True
         except:
             return False
 
-    def _mapping(self, index):
-        if index is None:
-            index = self.app.config['ELASTICSEARCH_INDEX']
+    def _collections_mapping(self, index):
+        mapping = {
+                self.collection_doc_type : {
+                    "_parent": {"type": self.records_doc_type},
+                    #define the mapping for all Marc entries
+                    "properties": {
+                        #force recid type to integer for default sorting
+                        "recid": {"type": "integer"},
+                        "name": {
+                            "type": "string", 
+                            "analyzer": "keyword"
+                            }
+                        }
+                    }
+        }
+        return self._mapping(index, self.collection_doc_type, mapping)
+
+    def _bibdocs_mapping(self, index):
+        mapping = {
+                self.bibdocs_doc_type: {
+                    "_parent": {"type": self.records_doc_type},
+                    #define the mapping for all Marc entries
+                    "properties": {
+                        #force recid type to integer for default sorting
+                        "recid": {"type": "integer"},
+                        "fulltext": {"type": "string"},
+                        }
+                    }
+        }
+        return self._mapping(index, self.bibdocs_doc_type, mapping)
+
+    def _records_mapping(self, index):
         mapping = {
                 self.records_doc_type: {
-                    #default analyzer is set to the fulltext detected language
-                    #"_analyzer": {"path": "fulltext_language"},
-
-                    #reduce the index size: to remove for version > 0.9, will
-                    # be the default
-                    #"_source": { "compress": "true" },
-
-                    # can be used to create relations between records such as PRINT_MEDIA ISSUE relations.
-                    #"_parent": {"type": self.records_doc_type},
-
-
                     #define the mapping for all Marc entries
                     "properties": {
                         #force recid type to integer for default sorting
@@ -196,27 +219,27 @@ class ElasticSearch(object):
                                             "analyzer": "keyword"}
                                         }
                                     }
-                                },
+                                }
                             }
-                        },
+                        }
                     }
                 }
+        return self._mapping(index, self.records_doc_type, mapping)
+        
+    def _mapping(self, index, doc_type, mapping):
         try:
-            self.connection.put_mapping(index=index,
-                    doc_type=self.records_doc_type,
+            self.connection.put_mapping(index=index, doc_type=doc_type,
                 mapping=mapping)
             return True
         except:
             return False
-    def index_records(self, records, index=None):
-        if not records:
+
+    def _bulk_index_docs(self, docs, doc_type, index):
+        if not docs:
             return []
-        if index is None:
-            index = self.app.config['ELASTICSEARCH_INDEX']
-        
-        print "Indexing: %d records" % len(records)
+        print "Indexing: %d records for %s" % (len(docs), doc_type)
         results = self.connection.bulk_index(index=index,
-                doc_type=self.records_doc_type, docs=records, id_field='_id',
+                doc_type=doc_type, docs=docs, id_field='_id',
                 refresh=self.app.config.get("DEBUG"))
         errors = []
         for it in results.get("items"):
@@ -224,20 +247,76 @@ class ElasticSearch(object):
                 errors.append((it.get("index").get("_id"), it.get("index").get("error")))
         return errors
 
-    def index(self, recids, index=None, bulk_size=100000, **kwargs):
+    def _get_record(self, recid):
+        from invenio.modules.records.api import get_record
+        record_as_dict = get_record(recid).dumps()
+        del record_as_dict["__meta_metadata__"]
+        return record_as_dict
+
+    def _get_text(self, recid):
+        from invenio.legacy.bibdocfile.api import BibRecDocs
+        text = BibRecDocs(recid).get_text()
+        if not text:
+            return None
+        return {
+            "fulltext": BibRecDocs(recid).get_text(),
+            "recid": recid,
+            "_id": recid,
+            "_parent": recid
+        }
+
+    def _get_collections(self, recid):
+        return {
+            "recid": recid,
+            "_id": recid,
+            "_parent": recid,
+            "name": self._recids_collections.get(recid, ""),
+        }
+
+    def get_all_collections_record(self, recreate_cache_if_needed=True):
+        """Return a dict with recid as key and collection list as value. This
+        replace existing Invenio function but is faster."""
+        from invenio.legacy.search_engine import collection_reclist_cache, get_collection_reclist
+        ret = {}
+    
+        #update the cache?
+        if recreate_cache_if_needed:
+            collection_reclist_cache.recreate_cache_if_needed()
+    
+        for name in collection_reclist_cache.cache.keys():
+            recids = get_collection_reclist(name, recreate_cache_if_needed=False)
+            for recid in recids:
+                ret.setdefault(recid, []).append(name)
+        self._recids_collections = ret
+
+    def index_collections(self, recids, index=None, bulk_size=100000, **kwargs):
+        self.get_all_collections_record()
         if index is None:
             index = self.app.config['ELASTICSEARCH_INDEX']
-        from invenio.modules.records.api import get_record
-        records = []
+        return self._index_docs(recids, self.collection_doc_type, index,
+                bulk_size, self._get_collections)
+
+    def index_bibdocs(self, recids, index=None, bulk_size=100000, **kwargs):
+        if index is None:
+            index = self.app.config['ELASTICSEARCH_INDEX']
+        return self._index_docs(recids, self.bibdocs_doc_type, index, bulk_size, self._get_text)
+
+    def index_records(self, recids, index=None, bulk_size=100000, **kwargs):
+        if index is None:
+            index = self.app.config['ELASTICSEARCH_INDEX']
+        return self._index_docs(recids, self.records_doc_type, index, bulk_size, self._get_record)
+
+    def _index_docs(self, recids, doc_type, index, bulk_size, get_docs):
+        docs = []
         errors = []
         for recid in recids:
-            record_as_dict = get_record(recid).dumps()
-            del record_as_dict["__meta_metadata__"]
-            records.append(record_as_dict)
-            if len(records) >= bulk_size:
-                errors += self.index_records(records, index)
-                records = []
-        errors += self.index_records(records, index)
+            doc = get_docs(recid)
+            if doc:
+                docs.append(doc)
+            if len(docs) >= bulk_size:
+                errors += self._bulk_index_docs(docs, doc_type=doc_type, index=index)
+                docs = []
+        errors += self._bulk_index_docs(docs, doc_type=doc_type, index=index)
         return errors
 
     def find_similar(self, recid, index=None, **kwargs):
@@ -248,7 +327,7 @@ class ElasticSearch(object):
                 doc_type=self.records_doc_type,
                 id=recid, mlt_fields=fields_to_compute_similarity)
 
-    def search(self, query, index=None, cc=None, c=None, p="", f="", rg=None,
+    def search(self, query, index=None, cc=None, c=[], p="", f="", rg=None,
             sf=None, so="d", jrec=0, facet_filters=[], **kwargs):
         """ """
         if index is None:
@@ -265,7 +344,7 @@ class ElasticSearch(object):
             "size": rg,
             "from": jrec,
             "fields": [
-                "recid"
+                "_all"
                 ]
         }
         if sf:
@@ -283,6 +362,20 @@ class ElasticSearch(object):
                 "term": {
                     term: value
                 }
+            })
+        for col in c:
+            (term, value) = ft
+            filters.append({
+                "has_child": {
+                    "type": self.collection_doc_type,
+                    "query": {
+                        "term": {
+                            "name": {
+                                "value": col
+                                }
+                            }
+                        }
+                    }
             })
         if filters:
             query = {
@@ -305,22 +398,31 @@ class ElasticSearch(object):
                 }
             }
         }
+        query["highlight"] = {
+                "fields": {
+                    "number_of_fragments" : 3,
+                    "fragment_size" : 150,
+                    "authors.*": {},
+                    "title.*": {}
+                    }
+                }
         return self.process_results(self.connection.search(query, index=index,
                                                           **kwargs))
+
 
 
 class Hits(object):
 
     def __init__(self, data):
-        self.data = data
+        self.data = data.get("hits")
 
     def __iter__(self):
         #TODO query with token if you ask for more then len(self)
-        for hit in self.data['hits']['hits']:
+        for hit in self.data['hits']:
             yield hit['_id']
 
     def __len__(self):
-        return self.data['hits']['total']
+        return self.data['total']
 
 
 from UserDict import UserDict
@@ -329,6 +431,14 @@ class Facets(UserDict):
     def __init__(self, data):
         UserDict.__init__(self, data.get("facets"))
 
+from UserDict import UserDict
+class Highlights(UserDict):
+    
+    def __init__(self, data):
+        new_data = {}
+        for hit in data.get('hits', {}).get('hits', []):
+            new_data[hit.get('_id')] = hit.get("highlight", {})
+        UserDict.__init__(self, new_data)
 
 class Response(object):
 
@@ -342,6 +452,10 @@ class Response(object):
     @property
     def facets(self):
         return Facets(self.data)
+    
+    @property
+    def highlights(self):
+        return Highlights(self.data)
 
 
 def process_es_results(results):
@@ -351,15 +465,34 @@ def process_es_results(results):
 def process_es_query(query):
     es_query = {
             "query": {
-                "query_string": {
-                    "query": query
+                "bool": {
+                    "should": [
+                        {
+                            "query_string": {
+                                "query": query
+                                }
+                            },
+                        {
+                            "has_child": {
+                                "type": "bibdocs",
+                                "query": {
+                                    "query_string": {
+                                        "default_field": "fulltext",
+                                        "query": query
+                                        }
+                                    }
+                                }
+                            }
+                        ],
+                        "minimum_should_match" : 1
                     }
-                },
-    }
+                }
+            }
     return es_query
 
 
 def setup_app(app):
+
     #from somewhere import process_es_query, process_es_result
     es = ElasticSearch(app)
     es.query_handler(process_es_query)
