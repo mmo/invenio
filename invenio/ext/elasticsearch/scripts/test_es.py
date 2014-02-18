@@ -54,9 +54,9 @@ if __name__ == '__main__':
         es.index_collections(range(1,100), bulk_size=1000)
 
         print "-- Perform search --"
-        res = es.search(query="Oxford or unification",
-                facet_filters=[("facet_authors", "Ellis, J"), ("facet_authors",
-                    "Ibanez, L E")])
+        res = es.search(query="Sneutrinos or Hochsch",
+                facet_filters=[("facet_authors", "Schael, S"), ("facet_authors",
+                    "Bruneliere, R")])
 
         print "Hits:"
         print [hit for hit in res.hits]

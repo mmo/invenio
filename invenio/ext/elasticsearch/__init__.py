@@ -33,7 +33,7 @@ It should be able to perform:
 
 TODO:
 - exceptions
-- fulltext highlighting
+- fulltext highlighting with complex queries
 - decide if we create one ES document type for each JsonAlchemy document type
 - convert an Invenio query into a ES query
 - specify the mapping, facets and sorting in JsonAlchemy
@@ -364,8 +364,8 @@ class ElasticSearch(object):
         if rg is None:
             rg = int(self.app.config['CFG_WEBSEARCH_DEF_RECORDS_IN_GROUPS'])
 
-        query = self.process_query(query)
-        options = {
+        es_query = self.process_query(query)
+        query_body = {
             "size": rg,
             "from": jrec,
             "fields": [
@@ -375,7 +375,7 @@ class ElasticSearch(object):
 
         # sorting
         if sf:
-            options["sort"] = [{
+            query_body["sort"] = [{
                 "sort_%s" % sf: {
                     "order": "desc" if so == "d" else "asc"
                     }
@@ -409,10 +409,10 @@ class ElasticSearch(object):
 
         # filters concatenation
         if filters:
-            query = {
+            query_body = {
                 "query" : {
                     "filtered": {
-                        "query": query.get("query"),
+                        "query": es_query.get("query"),
                         "filter": {
                             "bool": {
                                 "must": filters
@@ -424,13 +424,45 @@ class ElasticSearch(object):
 
         # facet configuration
         from .config.facets import records_config
-        query["facets"] = records_config()
+        query_body["facets"] = records_config()
 
         # hightlight configuration
         from .config.highlights import records_config
-        query["highlight"] = records_config()
-        return self.process_results(self.connection.search(query, index=index,
-                                                          **kwargs))
+        query_body["highlight"] = records_config()
+        results = self.process_results(self.connection.search(query_body,
+            index=index, doc_type=self.records_doc_type, **kwargs))
+        
+        #build query for fulltext highlighting
+        from .config.highlights import bibdocs_config
+        matched_ids = [recid for recid in results.hits] 
+        bibdocs_query = {
+                "query": {
+                    "filtered": {
+                        "query": {
+                            "simple_query_string": {
+                                "fields": ["fulltext"],
+                                "query": query
+                                }
+                            },
+                        "filter": {
+                            "ids": {
+                                "values": matched_ids
+                                }
+                            }
+                        }
+                    },
+                "highlight": bibdocs_config()
+                }
+
+        #submit query for fulltext highlighting
+        hi_results = self.process_results(self.connection.search(bibdocs_query,
+            index=index, doc_type=self.bibdocs_doc_type, **kwargs))
+        
+        #merge with existing metadata highlights
+        for recid, hi in hi_results.highlights.iteritems():
+            results.highlights.setdefault(recid,{}).update(hi)
+
+        return results
 
 
 def setup_app(app):

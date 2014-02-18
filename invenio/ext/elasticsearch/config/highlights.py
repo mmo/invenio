@@ -21,14 +21,25 @@
 General config file for ES index.
 """
 
+BASE_CONFIG = {
+        "number_of_fragments" : 3,
+        "fragment_size" : 70
+        }
 
 def records_config():
     config = {
             "fields": {
-                "number_of_fragments" : 3,
-                "fragment_size" : 150,
-                "authors.*": {},
-                "title.*": {}
+                "authors.*": BASE_CONFIG,
+                "title.*": BASE_CONFIG
+                }
+            }
+    return config
+
+
+def bibdocs_config():
+    config = {
+            "fields": {
+                "fulltext": BASE_CONFIG
                 }
             }
     return config
