@@ -203,7 +203,6 @@ class ElasticSearch(object):
                 }
         if parent_type:
             mapping[doc_type]["_parent"] = {"type": parent_type}
-        print mapping
         try:
             self.connection.put_mapping(index=index, doc_type=doc_type,
                 mapping=mapping)
@@ -436,7 +435,7 @@ class ElasticSearch(object):
 
 def setup_app(app):
 
-    from el_query import process_es_query, process_es_results
+    from es_query import process_es_query, process_es_results
     es = ElasticSearch(app)
     es.query_handler(process_es_query)
     es.results_handler(process_es_results)
