@@ -18,15 +18,15 @@
 ## 59 Temple Place, Suite 330, Boston, MA 02111-1307, USA.
 
 """
-es_query contains function warpper between Invenio and elasticsearch.
+es_query contains the function wrapper between Invenio and elasticsearch.
 
 usage:
 def setup_app(app):
 
     from es_query import process_es_query, process_es_results
     es = ElasticSearch(app)
-    es.query_handler(process_es_query)
-    es.results_handler(process_es_results)
+    es.set_query_handler(process_es_query)
+    es.set_results_handler(process_es_results)
 
 
 """
@@ -35,6 +35,7 @@ from UserDict import UserDict
 
 def process_es_query(query):
     """Convert an Invenio query into an ES query.
+
     @param query: [string] Invenio query
     @return: [dict] ES query
     """
@@ -65,7 +66,8 @@ def process_es_query(query):
 
 
 def process_es_results(results):
-    """Convert a ES results into a Invenio search engine result.
+    """Convert ES results into Invenio search engine's results.
+
     @param results: [object] elasticsearch results
     @return: [object] standard Invenio search engine results
     """

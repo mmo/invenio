@@ -20,7 +20,7 @@
 """
 invenio.ext.elasticsearch
 -------------------------
-Elasticsearch a search engine for invenio.
+Elasticsearch a search engine for Invenio.
 
 It should be able to perform:
 
@@ -28,7 +28,7 @@ It should be able to perform:
 - metadata facets such as authors, Invenio collection facets both with the
   corresponding filters
 - fulltext and metadata fields highlightings
-- fast collecition indexing, mid-fast metadata indexing, almost fast fulltext
+- fast collection indexing, mid-fast metadata indexing, almost fast fulltext
   indexing
 
 TODO:
@@ -110,25 +110,27 @@ class ElasticSearch(object):
     def connection(self):
         return PyElasticSearch(self.app.config['ELASTICSEARCH_URL'])
 
-    def query_handler(self, handler):
+    def set_query_handler(self, handler):
         """
-        Specify a function to convert the invenio query into a
-        ES query.
-        @param handler: [function] take a query[string] parameter
+        Specify a function to convert the Invenio query into an ES query.
+
+        @param handler: [function] take a query [string] parameter
         """
         self.process_query = handler
 
-    def results_handler(self, handler):
+    def set_results_handler(self, handler):
         """
-        Specify a function to convert a ES search result into an Invenio
-        understanding object.
-        @param handler: [function] take a query[string] parameter
+        Specify a function to convert ES search results into an object
+        understandable by Invenio.
+
+        @param handler: [function] take a query [string] parameter
         """
         self.process_results = handler
 
     @property
     def status(self):
         """The status of the ES cluster.
+
         See: http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/cluster-health.html
         for more.
         TODO: is it usefull?
@@ -139,7 +141,8 @@ class ElasticSearch(object):
         return self.connection.health().get("status")
 
     def index_exists(self, index=None):
-        """Check if the index exist in the cluster.
+        """Check if the index exists in the cluster.
+
         @param index: [string] index name
         @return: [bool] True if exists
         """
@@ -151,6 +154,7 @@ class ElasticSearch(object):
 
     def delete_index(self, index=None):
         """Delete the given index.
+
         @param index: [string] index name
         @return: [bool] True if success
         """
@@ -164,7 +168,8 @@ class ElasticSearch(object):
 
     def create_index(self, index=None):
         """Create the given index.
-        It also put basic configuration and doc types mapping.
+
+        Also set basic configuration and doc type mappings.
         @param index: [string] index name
         @return: [bool] True if success
         """
@@ -178,7 +183,7 @@ class ElasticSearch(object):
             self.connection.create_index(index=index, settings=index_settings())
             
             from .config.fields import records_mapping, bibdocs_mapping,\
-                collections_mapping 
+                    collections_mapping
             #mappings
             self._mapping(index=index, doc_type=self.records_doc_type,
                     fields_mapping=records_mapping())
@@ -249,9 +254,10 @@ class ElasticSearch(object):
             "name": self._recids_collections.get(recid, ""),
         }
 
-    def get_all_collections_record(self, recreate_cache_if_needed=True):
-        """Return a dict with recid as key and collection list as value. This
-        replace existing Invenio function for performance reason.
+    def get_all_collections_for_records(self, recreate_cache_if_needed=True):
+        """Return a dict with recid as key and collection list as value.
+
+        This replaces existing Invenio function for performance reasons.
         @param recreate_cache_if_needed: [bool] True if regenerate the cache
         """
         from invenio.legacy.search_engine import collection_reclist_cache, get_collection_reclist
@@ -269,14 +275,15 @@ class ElasticSearch(object):
 
     def index_collections(self, recids, index=None, bulk_size=100000, **kwargs):
         """Index collections.
-        Collections maps computed by webcoll is indexed into the given index in order to
-        filter by collections.
+
+        Collection maps computed by webcoll are indexed into the given index in
+        order to allow filtering by collection.
         @param recids: [list of int] recids to index
         @param index: [string] index name
         @param bulk_size: [int] batch size to index
         @return: [list of int] list of recids not indexed due to errors
         """
-        self.get_all_collections_record()
+        self.get_all_collections_for_records()
         if index is None:
             index = self.app.config['ELASTICSEARCH_INDEX']
         return self._index_docs(recids, self.collections_doc_type, index,
@@ -284,6 +291,7 @@ class ElasticSearch(object):
 
     def index_bibdocs(self, recids, index=None, bulk_size=100000, **kwargs):
         """Index fulltext files.
+
         Put the fullext extracted by Invenio into the given index.
         @param recids: [list of int] recids to index
         @param index: [string] index name
@@ -292,10 +300,12 @@ class ElasticSearch(object):
         """
         if index is None:
             index = self.app.config['ELASTICSEARCH_INDEX']
-        return self._index_docs(recids, self.bibdocs_doc_type, index, bulk_size, self._get_text)
+        return self._index_docs(
+                recids, self.bibdocs_doc_type, index, bulk_size, self._get_text)
 
     def index_records(self, recids, index=None, bulk_size=100000, **kwargs):
         """Index bibliographic records.
+
         The document structure is provided by JsonAlchemy.
         Note: the __metadata__ is removed for the moment.
         TODO: is should be renamed as index?
@@ -306,7 +316,9 @@ class ElasticSearch(object):
         """
         if index is None:
             index = self.app.config['ELASTICSEARCH_INDEX']
-        return self._index_docs(recids, self.records_doc_type, index, bulk_size, self._get_record)
+        return self._index_docs(
+                recids, self.records_doc_type, index, bulk_size,
+                self._get_record)
 
     def _index_docs(self, recids, doc_type, index, bulk_size, get_docs):
         docs = []
@@ -316,13 +328,15 @@ class ElasticSearch(object):
             if doc:
                 docs.append(doc)
             if len(docs) >= bulk_size:
-                errors += self._bulk_index_docs(docs, doc_type=doc_type, index=index)
+                errors += self._bulk_index_docs(
+                        docs, doc_type=doc_type, index=index)
                 docs = []
         errors += self._bulk_index_docs(docs, doc_type=doc_type, index=index)
         return errors
 
     def find_similar(self, recid, index=None, **kwargs):
         """Find simlar documents to the given recid.
+
         Note: not tested
         @param recid: [int] document id to find similar
         @param index: [string] index name
@@ -331,13 +345,14 @@ class ElasticSearch(object):
         if index is None:
             index = self.app.config['ELASTICSEARCH_INDEX']
         fields_to_compute_similarity = ["_all"]
-        return self.connection.more_like_this(index=index,
-                doc_type=self.records_doc_type,
+        return self.connection.more_like_this(
+                index=index, doc_type=self.records_doc_type,
                 id=recid, mlt_fields=fields_to_compute_similarity)
 
     def search(self, query, index=None, cc=None, c=[], f="", rg=None,
             sf=None, so="d", jrec=0, facet_filters=[], **kwargs):
         """Perform a search query.
+
         Note: a lot of work to do.
         @param query: [string] search query
         @param recids: [list of int] recids to index
@@ -473,7 +488,7 @@ def setup_app(app):
 
     from es_query import process_es_query, process_es_results
     es = ElasticSearch(app)
-    es.query_handler(process_es_query)
-    es.results_handler(process_es_results)
+    es.set_query_handler(process_es_query)
+    es.set_results_handler(process_es_results)
 
     #record_changed.connect(es.index)
